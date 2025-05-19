@@ -1,0 +1,6 @@
+# Activity-to-Music session started 0511_2103
+# audiogen sample_rate=32000
+#  offset(s) | label | prompt
+# root_prompt changed to chill music
+     0.00 | Sitting and Reading    | chill music… Current activity: sitting and reading. Heart rate: 64 bpm.
+    14.68 | Lunch Break            | chill music… Current activity: lunch break. Heart rate: 71 bpm.

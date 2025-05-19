@@ -1,0 +1,8 @@
+trainer:
+  _target_: audiocraft.train.trainer.Trainer
+  max_steps: 500
+  batch_size: 8
+  precision: 8
+  accelerator: ddp
+  devices: 4
+  lr: 1e-4

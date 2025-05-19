@@ -1,0 +1,18 @@
+# data
+# data/
+*.pth
+*.zip
+*.npy
+*.csv
+*.json
+*h5
+*.pkl
+*.parquet
+*.wav
+*.mp3
+*.mp4
+*.avi
+
+# exceptions
+!*.py
+!*.swift

@@ -1,0 +1,10 @@
+ ┌──────── Local laptop ───────┐                 ┌──────────── GPU VM ────────┐
+ │                              │   websocket job    │                                   │
+ │  ActivityEncoder (CPU/GPU) ──┼───── ────────▶│    MusicGen server (GPU)          │
+ │    • class-based prompt      │   ① meta JSON      │      • spawns 1 streamer per ID   │
+ │    • +/– SigLIP embedding    │   ② FP16 hidden    │      • pushes chunks              │
+ │                              │                    │                                   │
+ │  MusicPlayer (= mixer) ◀───┼───────────────────┐ │                          │
+ │    • receives chunks          │   binary frames  │ │  chunks (id + PCM)               │
+ │    • cross-fade, play, save   │                 ◀┘│                                  │
+ └──────────────────────────────┘          └────────────────────────── ─┘

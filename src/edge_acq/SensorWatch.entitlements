@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <key>com.apple.developer.healthkit</key>
+    <true/>
+    <key>com.apple.developer.healthkit.access</key>
+    <array>
+        <string>HKQuantityTypeIdentifierHeartRate</string>
+        <string>HKQuantityTypeIdentifierBodyTemperature</string>
+    </array>
+    <key>com.apple.developer.healthkit.workout-route</key>
+    <true/>
+    <key>com.apple.developer.background-modes</key>
+    <array>
+        <string>workout-processing</string>
+    </array>
+</dict>
+</plist>

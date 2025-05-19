@@ -1,0 +1,8 @@
+# Activity-to-Music session started 0511_2108
+# audiogen sample_rate=32000
+#  offset(s) | label | prompt
+# root_prompt changed to chill music
+     0.00 | Cycling Outdoors       | chill music… Current activity: cycling outdoors. Heart rate: 123 bpm.
+    15.94 | Walking                | chill music… Current activity: walking. Heart rate: 84 bpm.
+    33.30 | Transition             | chill music… Current activity: transition. Heart rate: 107 bpm.
+    50.67 | Walking                | chill music… Current activity: walking. Heart rate: 97 bpm.

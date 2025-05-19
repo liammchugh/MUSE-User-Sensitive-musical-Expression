@@ -1,0 +1,11 @@
+# Activity-to-Music session started 0511_2055
+# audiogen sample_rate=32000
+#  offset(s) | label | prompt
+# root_prompt changed to chill music
+     0.00 | Lunch Break            | chill music… Current activity: lunch break. Heart rate: 76 bpm.
+    14.68 | Climbing Stairs        | chill music… Current activity: climbing stairs. Heart rate: 90 bpm.
+    31.62 | Working at Desk        | chill music… Current activity: working at desk. Heart rate: 72 bpm.
+    48.56 | Lunch Break            | chill music… Current activity: lunch break. Heart rate: 87 bpm.
+    65.50 | Lunch Break            | chill music… Current activity: lunch break. Heart rate: 67 bpm.
+    82.44 | Working at Desk        | chill music… Current activity: working at desk. Heart rate: 85 bpm.
+    99.38 | Transition             | chill music… Current activity: transition. Heart rate: 106 bpm.

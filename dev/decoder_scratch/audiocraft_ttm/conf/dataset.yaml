@@ -1,0 +1,7 @@
+# Example dataset configuration
+dataset:
+  _target_: audiocraft.data.audio_dataset.FolderAudioDataset
+  path: /absolute/path/to/your/music/dataset   # must point to your .wav, .flac, .mp3
+  sample_rate: 32000                           # or 16000, depends on training plan
+  # need text annotations as well (for text-to-music).
+  # AudioCraft expects them in a .tsv or a JSON matching the text with audio.

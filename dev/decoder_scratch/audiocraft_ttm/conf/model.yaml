@@ -1,0 +1,7 @@
+model:
+  # MusicGen "small" architecture
+  name: musicgen
+  arch: small
+
+  # model hyperparams
+  audio_sample_rate: 32000
