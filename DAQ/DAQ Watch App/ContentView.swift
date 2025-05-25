@@ -1,3 +1,6 @@
+import SwiftUI
+import Combine
+
 struct ContentView: View {
     @EnvironmentObject var data: SensorDataManager
     @State private var showSettings = false
@@ -39,6 +42,24 @@ struct ContentView: View {
                 .foregroundColor(.red)
         }
         .padding()
+    }
+    
+    // One-tap Start/Stop
+    private var exportButton: some View {
+        Button(action: { data.toggleExport() }) {
+            Label(data.isExporting ? "Stop Export" : "Start Export",
+                  systemImage: data.isExporting ? "pause.circle" : "play.circle")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(data.isExporting ? .red : .green)
+    }
+    
+    // Yellow banner while exporting
+    private var statusBanner: some View {
+        Text("Streaming to laptop…")
+            .font(.footnote)
+            .foregroundColor(.yellow)
     }
 
     private func saveHost() {
