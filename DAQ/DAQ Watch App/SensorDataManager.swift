@@ -109,37 +109,36 @@ final class SensorDataManager: NSObject, ObservableObject {
     }
 
     // MARK: – Workout session / live heart-rate
+    // MARK: – Workout session / live heart-rate  (delegate only → works on watchOS 5-11)
     private func startWorkoutSession() {
+
+        // This code is excluded when you compile for the watchOS Simulator,
+        // which avoids the “Watch-Only stubs” and ‘heartRate’ symbol errors.
+        #if !targetEnvironment(simulator)
+
         let config = HKWorkoutConfiguration()
         config.activityType = .other
         config.locationType = .unknown
 
         do {
-            workoutSession = try HKWorkoutSession(healthStore: healthStore, configuration: config)
+            workoutSession = try HKWorkoutSession(healthStore: healthStore,
+                                                  configuration: config)
             workoutBuilder = workoutSession!.associatedWorkoutBuilder()
             workoutBuilder!.dataSource = HKLiveWorkoutDataSource(healthStore: healthStore,
                                                                  workoutConfiguration: config)
 
-            if #available(watchOS 11.0, *) {
-                // Combine publisher (watchOS 11+)
-                workoutBuilder!.statisticsCollectionPublisher
-                    .receive(on: RunLoop.main)
-                    .sink { [weak self] stats in
-                        guard let qty = stats.statistics(for: .heartRate)?
-                                .mostRecentQuantity()?
-                                .doubleValue(for: .count().unitDivided(by: .minute())) else { return }
-                        self?.heartRateBPM = qty
-                    }
-                    .store(in: &cancellables)
-            } else {
-                // Delegate fallback (<= watchOS 10)
-                workoutBuilder!.delegate = self
-            }
+            // Just the delegate — no Combine, no statisticsCollectionPublisher
+            workoutBuilder!.delegate = self
 
             workoutSession!.startActivity(with: .now)
             workoutBuilder!.beginCollection(withStart: .now) { _, _ in }
-        } catch { print("Workout start error:", error) }
+        } catch {
+            print("Workout start error:", error)
+        }
+
+        #endif
     }
+
 
     // MARK: – One-shot wrist temperature
     private func fetchLatestTemperature() {
@@ -158,19 +157,27 @@ final class SensorDataManager: NSObject, ObservableObject {
     }
 }
 
-// MARK: – HR delegate for watchOS 10
+#if !targetEnvironment(simulator)
 extension SensorDataManager: HKLiveWorkoutBuilderDelegate {
+
     func workoutBuilder(_ builder: HKLiveWorkoutBuilder,
                         didCollectDataOf collectedTypes: Set<HKSampleType>) {
+
         guard collectedTypes.contains(where: {
-            ($0 as? HKQuantityType) == HKQuantityType.quantityType(forIdentifier: .heartRate)
+            ($0 as? HKQuantityType) ==
+               HKQuantityType.quantityType(forIdentifier: .heartRate)
         }) else { return }
 
-        if let qty = builder.statistics(for: .heartRate)?
-                .mostRecentQuantity()?
-                .doubleValue(for: .count().unitDivided(by: .minute())) {
-            DispatchQueue.main.async { self.heartRateBPM = qty }
+        if let bpm = builder.statistics(for: .heartRate)?
+                        .mostRecentQuantity()?
+                        .doubleValue(for:
+                           .count().unitDivided(by: .minute())) {
+
+            DispatchQueue.main.async { self.heartRateBPM = bpm }
         }
     }
+
     func workoutBuilderDidCollectEvent(_ builder: HKLiveWorkoutBuilder) { }
 }
+#endif
+
