@@ -1,159 +1,134 @@
-# vm_server.py  -----------------------------------------------------------
-"""
-GPU-side MusicGen Web-Socket server
+#!/usr/bin/env python3
+# --------------------------------------------------------------------------- #
+#  MusicGen single-worker server with system/context prompts & rolling cache  #
+# --------------------------------------------------------------------------- #
 
- - listens on 0.0.0.0:8765
- - client sends   – text JSON header  ➔  binary tensor bytes
- - server streams – binary  [uint32 job_id | float32[] pcm]
+""" MusicGen server for generating music with system and context prompts.
+Send updates via following structure options:
+# ---- one-time system prompt ----
+ws.send(json.dumps({"t":"job","id":1,"system":"calm chill-house vibe"}))
 
-One MusicGen instance is shared; only one generator can run at a time.
-Older generators are cancelled when new jobs are received.
+# ---- frequent context updates (no restart) ----
+ws.send(json.dumps({"t":"job","id":2,"context":"transition - HR 85 bpm"}))
+
+# ---- force a fresh song ----
+ws.send(json.dumps({"t":"job","id":3,"context":"high-energy run","restart":true}))
+
+
 """
-import asyncio, json, struct, numpy as np, torch, websockets
-from transformers import MusicgenForConditionalGeneration, MusicgenProcessor, BitsAndBytesConfig
+
+
+import asyncio, json, struct, argparse, torch, websockets, numpy as np
+from transformers import MusicgenProcessor, BitsAndBytesConfig
 from app import MusicgenStreamer
 
-# ------------------------ constants -----------------------------------
-SR          = 32_000
-PLAY_STEPS  = int(1.0 * 50)           # ≈ N s audio chunks
-MAX_STEPS   = int(15   * 50)          # 20 s total per job
+try:
+    from musicgen_ext.context_model import MusicgenWithContext as MGClass
+    from musicgen_ext.rolling_kv     import RollingKVCache
+    HAVE_CTX = True
+except ImportError:
+    from transformers import MusicgenForConditionalGeneration as MGClass
+    RollingKVCache, HAVE_CTX = None, False
+    print("[srv] context helpers not found – KV window disabled")
 
-# ------------------------ model ---------------------------------------
-print("↻ Loading MusicGen-small on GPU …", flush=True)
-device = "cuda" if torch.cuda.is_available() else "cpu"
+SR, PLAY_STEPS, TOK_WINDOW, DROP_STRIDE = 32_000, 40, 2500, 200    # ≈0.8 s chunks
 
-# musicgen = (MusicgenForConditionalGeneration
-#             .from_pretrained("facebook/musicgen-small")
-#             .half().to(device).eval())
+# --------------------------------------------------------------------------- #
+def load_model(bits="fp16", model_id="facebook/musicgen-small"):
+    if bits in {"fp16", "fp32"}:
+        m = MGClass.from_pretrained(model_id, torch_dtype=torch.float16 if bits=="fp16" else None)
+        return m.cuda().eval()
+    cfg = BitsAndBytesConfig(load_in_8bit=True if bits=="8bit" else False,
+                             load_in_4bit=True if bits=="4bit" else False,
+                             bnb_4bit_compute_dtype=torch.float16,
+                             bnb_4bit_quant_type="nf4")
+    return MGClass.from_pretrained(model_id, quantization_config=cfg).eval()
 
-bits = 'fp16' # vm currently only support half precision. Update for b&b quantization
-model_id="facebook/musicgen-small"
-if bits == 'fp16':
-    # ---------- 16-bit model ----------
-    musicgen = MusicgenForConditionalGeneration.from_pretrained(model_id).to(device).half().eval()
-elif bits == 'fp32':
-    # ---------- 32-bit model ----------
-    musicgen = MusicgenForConditionalGeneration.from_pretrained(model_id).to(device).eval()
-else:
-    if bits == '4bit':
-        # ---------- 4-bit NF4 quantized model ----------
-        bnb_cfg = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-        )
-    elif bits == '8bit':
-        # ---------- 8-bit quantized model ----------
-        bnb_cfg = BitsAndBytesConfig(
-            load_in_8bit=True,               # ← switched from load_in_4bit
-            llm_int8_threshold=6.0,          # keep default (you can tune)
-            llm_int8_enable_fp32_cpu_offload=False,  # leave on-GPU
-        )
-    else:
-        raise ValueError(f"Invalid bit-tag: {bits}")
-    musicgen = MusicgenForConditionalGeneration.from_pretrained(
-        model_id,
-        quantization_config=bnb_cfg,
-        # device_map="auto",
-    ).eval()
+# --------------------------------------------------------------------------- #
+async def ws_handler(ws):
+    loop  = asyncio.get_running_loop()
+    q_pcm = asyncio.Queue(maxsize=128)
 
-
-
-
-processor = MusicgenProcessor.from_pretrained("facebook/musicgen-small")
-
-print("✓ MusicGen ready")
-
-
-# ------------------------ socket handler ------------------------------
-async def handle_socket(ws: websockets.WebSocketServerProtocol):
-    new_task = None
-    current_task = None
-    current_streamer = None
-
-    loop = asyncio.get_running_loop()
-    print(f"[srv] new WS connection from {ws.remote_address}")
-
-    q_pcm = asyncio.Queue(maxsize=32)
+    # ---------- prompt state ----------
+    system_txt  = ""           # sticky “global” prompt
+    context_txt = ""           # frequently-updated prompt
+    cache = RollingKVCache(TOK_WINDOW, DROP_STRIDE) if HAVE_CTX else None
+    gen_task: asyncio.Task | None = None
 
     async def fanout():
         try:
             while True:
                 jid, pcm = await q_pcm.get()
-                payload = struct.pack("<I", jid) + pcm.astype("<f4", copy=False).tobytes()
-                await ws.send(payload)
-                print(f"[srv] → sent {len(pcm)/32000:.2f}s  job={jid}")
+                await ws.send(struct.pack("<I", jid) + pcm.astype("<f4").tobytes())
         except (asyncio.CancelledError, websockets.ConnectionClosed):
             pass
 
-    fanout_task = asyncio.create_task(fanout())
+    fan_task = asyncio.create_task(fanout())
 
     try:
         while True:
-            meta_raw = await ws.recv()
-            meta = json.loads(meta_raw)
-            print(f"[srv] meta received: {meta}")
-
-            if meta["t"] != "job":
+            meta = json.loads(await ws.recv())
+            if meta.get("t") != "job":
                 continue
 
-            job_id = int(meta["id"]) & 0xFFFFFFFF
-            prompt = meta["prompt"]
-            inputs = processor(text=prompt, return_tensors="pt").to("cuda")
+            jid      = int(meta["id"]) & 0xFFFFFFFF
+            restart  = bool(meta.get("restart", False))
+            system_txt  = meta.get("system",  system_txt)
+            context_txt = meta.get("context", context_txt)
+            full_prompt = (system_txt + "\n" + context_txt).strip()
 
-            if current_task:
-                current_task.cancel()
-                if current_streamer:
-                    current_streamer.stop_signal = True  # flag to end generation early
-                print("Cancelled previous job")
-                
-                # Flush old PCM still in the queue (currently letting local player handle it)
-                # while not q_pcm.empty():
-                #     try:
-                #         q_pcm.get_nowait()
-                #     except asyncio.QueueEmpty:
-                #         print("Flushed old queue")
-                #         break
-                        
-            def thread_gen(job_id, inputs):
-                nonlocal current_streamer
-                nonlocal current_task
-                nonlocal new_task
-                streamer = MusicgenStreamer(musicgen, device="cuda", play_steps=PLAY_STEPS)
-                streamer.stop_signal = False # default flag bool
-                current_streamer = streamer
-                
-                def on_audio(pcm, *_):
-                    loop.call_soon_threadsafe(asyncio.create_task, q_pcm.put((job_id, pcm.copy())))
+            print(f"[srv] ▶ job {jid}  restart={restart}  "
+                  f"(sys:{len(system_txt)} chars, ctx:{len(context_txt)} chars)")
 
-                streamer.on_finalized_audio = on_audio
-                
-                
+            if restart and gen_task:
+                gen_task.cancel()
+                if cache: cache.clear()     # wipe past KV
+                print("      KV cache cleared & generation cancelled")
+
+            # ----------- generator thread -----------
+            def run_generate():
+                streamer = MusicgenStreamer(model, device=device,
+                                            play_steps=PLAY_STEPS)
+                streamer.on_finalized_audio = \
+                    lambda pcm,*_: loop.call_soon_threadsafe(
+                        asyncio.create_task, q_pcm.put((jid, pcm.copy())))
+
+                prompt_inputs = proc(full_prompt, return_tensors="pt").to(device)
+                gen_kwargs = dict(**prompt_inputs,
+                                  streamer=streamer,
+                                  max_new_tokens=PLAY_STEPS * 20)
+                if cache and not restart and len(cache) > 0:
+                    gen_kwargs["past_key_values"] = cache.as_tuple()
+
                 with torch.inference_mode():
-                    musicgen.generate(**inputs,
-                                      streamer=streamer,
-                                      max_new_tokens=MAX_STEPS)
+                    model.generate(**gen_kwargs)
 
-            new_task = asyncio.create_task(asyncio.to_thread(thread_gen, job_id, inputs))
-                    
-                
-    except Exception as e:
-        print(f"[srv] exception: {e}")
+                if cache is not None:
+                    cache.append(model._pkv)
+
+            gen_task = asyncio.create_task(asyncio.to_thread(run_generate))
+
+    except websockets.ConnectionClosed:
+        pass
     finally:
-        fanout_task.cancel()
-        if current_task:
-            current_task.cancel()
+        fan_task.cancel()
+        if gen_task: gen_task.cancel()
 
-# ------------------------ main ----------------------------------------
-async def main(host="0.0.0.0", port=8765):
-    print(f"WebSocket MusicGen server listening on {host}:{port}")
-    async with websockets.serve(handle_socket, host, port,
-                                max_size=None, ping_interval=20):
-        await asyncio.Future()       # run forever
-
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n↩  Ctrl-C – shutting down")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--bits", choices=["fp16","fp32","8bit","4bit"], default="fp16")
+    args = ap.parse_args()
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    proc   = MusicgenProcessor.from_pretrained("facebook/musicgen-small")
+    model  = load_model(args.bits).to(device)
+    print(f"✓ MusicGen ({args.bits}) ready on {device}")
+
+    asyncio.run(websockets.serve(ws_handler, "0.0.0.0", args.port,
+                                 max_size=None, ping_interval=20))
+    print(f"WebSocket server listening on :{args.port}")
+    asyncio.get_event_loop().run_forever()
+
+
