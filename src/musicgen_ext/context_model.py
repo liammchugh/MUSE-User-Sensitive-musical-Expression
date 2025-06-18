@@ -1,6 +1,7 @@
 # src/musicgen_ext/modeling_musicgen_ext.py
 import torch
 from transformers import MusicgenForConditionalGeneration
+from typing import Optional
 
 class MusicgenWithContext(MusicgenForConditionalGeneration):
     """
@@ -32,20 +33,25 @@ class MusicgenWithContext(MusicgenForConditionalGeneration):
         return self._pkv
 
     @torch.inference_mode()
-    def generate_continuation(self,
-                              next_input_ids=None,
-                              inputs_embeds=None,
-                              max_new_tokens=100,
-                              streamer=None,
-                              **kwargs):
+    def generate_continuation(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        max_new_tokens: int = 100,
+        streamer=None,
+        **gen_kwargs,
+    ):
         if not hasattr(self, "_pkv"):
             raise RuntimeError("Call cache_past_tokens() first.")
+        
+        gen_kwargs.pop("past_key_values", None)
+
         return super().generate(
-            next_input_ids,
+            input_ids=input_ids,                 # <- **keyword** not positional
             inputs_embeds=inputs_embeds,
+            past_key_values=self._pkv,           # rolling cache
+            use_cache=True,
             max_new_tokens=max_new_tokens,
             streamer=streamer,
-            past_key_values=self._pkv,
-            use_cache=True,
-            **kwargs,
+            **gen_kwargs,
         )
