@@ -8,20 +8,26 @@ class MusicgenWithContext(MusicgenForConditionalGeneration):
         (1) cache_past_tokens(prompt_ids)
         (2) generate_continuation(new_ids, …)
     """
-
     @torch.inference_mode()
     def cache_past_tokens(self, input_ids, **gen_kwargs):
-        gen_kwargs = dict(
-            gen_kwargs,
-            do_sample=False,
-            max_new_tokens=0,
-            output_hidden_states=False,
-            output_attentions=False,
-            use_cache=True,
-            return_dict_in_generate=True,
-        )
+        # gen_kwargs = dict(
+        #     gen_kwargs,
+        #     do_sample=False,
+        #     max_new_tokens=0,
+        #     output_hidden_states=False,
+        #     output_attentions=False,
+        #     use_cache=True,
+        #     return_dict_in_generate=True,
+        # )
+        # -----------------------------------------------------------------
+        # make sure we have at least one token to satisfy GenerationMixin
+        if "max_new_tokens" not in gen_kwargs:
+            gen_kwargs["max_new_tokens"] = 1
+            gen_kwargs["do_sample"] = False
+        # -----------------------------------------------------------------
         out = super().generate(input_ids, **gen_kwargs)
-        self._pkv = out.past_key_values           # save
+        self._pkv = out.past_key_values
+        return self._pkv
 
     @torch.inference_mode()
     def generate_continuation(self,
