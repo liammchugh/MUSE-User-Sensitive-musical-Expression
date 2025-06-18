@@ -1,44 +1,17 @@
+import os
+from pathlib import Path
 import torch
 from torch import Tensor
-from pathlib import Path
+from torchvision.transforms.functional import resize
+from torch.utils.data import Dataset, DataLoader
+
 import pandas as pd
 import numpy as np
-# from torch.utils.data import Dataset, DataLoader
-from torchvision.transforms.functional import resize
-import os
 import librosa
 
 
 # if "KMP_DUPLICATE_LIB_OK" in os.environ:
 #     del os.environ["KMP_DUPLICATE_LIB_OK"]
-
-class AccelToRGBMel_librosa:
-    def __init__(self, sample_rate=64, img_size=64, device="cpu"):
-        self.sample_rate = sample_rate
-        self.img_size = img_size
-        self.device = device
-
-    def __call__(self, accel_waveform: np.ndarray) -> torch.Tensor:
-        """
-        accel_waveform: (3, N) numpy
-        Returns: torch.FloatTensor (3, H, W)
-        """
-        from skimage.transform import resize
-
-        mels = []
-        for i in range(3):  # 3-axis
-            mel = librosa.feature.melspectrogram(
-                y=accel_waveform[i].cpu().numpy(),  # convert to NumPy array
-                sr=self.sample_rate,
-                n_fft=256,
-                hop_length=32,
-                n_mels=64)
-            mel_db = librosa.power_to_db(mel, ref=np.max)
-            mel_img = resize(mel_db, (self.img_size, self.img_size), mode='constant')
-            mels.append(mel_img)
-
-        mels = np.stack(mels, axis=0)  # (3, H, W)
-        return torch.tensor(mels, dtype=torch.float32).to(self.device)  # (3, H, W)
 
 class AccelToRGBMel:
     """
@@ -100,6 +73,34 @@ class AccelToRGBMel:
 
         return m  # ready for Vision encoder
 
+class AccelToRGBMel_librosa:
+    """ This is super slow. Prioritize `AccelToRGBMel` instead."""
+    def __init__(self, sample_rate=64, img_size=64, device="cpu"):
+        self.sample_rate = sample_rate
+        self.img_size = img_size
+        self.device = device
+
+    def __call__(self, accel_waveform: np.ndarray) -> torch.Tensor:
+        """
+        accel_waveform: (3, N) numpy
+        Returns: torch.FloatTensor (3, H, W)
+        """
+        from skimage.transform import resize
+
+        mels = []
+        for i in range(3):  # 3-axis
+            mel = librosa.feature.melspectrogram(
+                y=accel_waveform[i].cpu().numpy(),  # convert to NumPy array
+                sr=self.sample_rate,
+                n_fft=256,
+                hop_length=32,
+                n_mels=64)
+            mel_db = librosa.power_to_db(mel, ref=np.max)
+            mel_img = resize(mel_db, (self.img_size, self.img_size), mode='constant')
+            mels.append(mel_img)
+
+        mels = np.stack(mels, axis=0)  # (3, H, W)
+        return torch.tensor(mels, dtype=torch.float32).to(self.device)  # (3, H, W)
 
 
 # --- Dataset ---
@@ -318,7 +319,7 @@ class ActivityDataset(Dataset):
 
 
 # --- Load data from PKL ---
-def loaddata(path):    
+def loaddata(path, sr, sl, start_time):    
     """Load accelerometer data from pkl file.
     Args:
         path (str): Path to the file.

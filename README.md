@@ -24,7 +24,7 @@ e6692-2025spring-FinalProject-MUSE-lm3963/
 ├── dev/                    # Development: Model Training, Experiments and visualizations
 ├── models/                 # Pretrained models and model checkpoints
 │   ├── decoder/            # Audio decoder finetunes (unused)
-│   └── encoder/            # Activity-sensitive mobile-data encoders (email liam.mchugh@columbia.edu for weights)
+│   └── encoder/            # mobile-activity encoders
 ├── src/                    # Source code for the project
 |   ├── edge_acq/           # Data Acquisition/Test Processing, Streaming on edge device (Jetson/wearable)
 │   |   └── data_prcs/      # Scripts for data preprocessing and augmentation
@@ -58,7 +58,7 @@ e6692-2025spring-FinalProject-MUSE-lm3963/
 - [NVIDIA Triton Temporal Fusion Transformer Architecture (OS)](#)
 - [Mesgarani N.A.P. Lab work on BCI-Augmented Attentional Audio Control](https://advanced.onlinelibrary.wiley.com/doi/full/10.1002/advs.202401379)
 
-### How to Run (offline mode)
+## How to Run (offline mode)
 1. Clone the repository:
     ```bash
     git clone https://github.com/username/e6692-2025spring-FinalProject-MUSE-lm3963.git
@@ -74,6 +74,11 @@ e6692-2025spring-FinalProject-MUSE-lm3963/
     ```
 4. For detailed instructions, refer to the [docs/](docs/) directory.
 
-### Additional Notes
+## Additional Notes
 - This project is being developed for commercial use.
 - For academic/research development, contact liam.mchugh@columbia.edu
+
+## Acknowledgements
+Building on open-source work from Meta's MusicGen & Sanchit Gandhi's streamer application demo
+
+https://huggingface.co/spaces/sanchit-gandhi/musicgen-streaming/blob/main/app.py#L52 
