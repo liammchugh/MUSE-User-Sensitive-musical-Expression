@@ -16,10 +16,14 @@ kv_window.init_from(model._pkv)              # prime with static prompt
 
 streamer = MusicgenStreamer(model, device="cuda", play_steps=40)
 
-
+import time
+import math
+activity_label = "warmup"
+play_seconds = 2.5
 
 while True:
     # ---- every activity event -------------------------------------
+    bpm = math.sin(time.time() / 100) * 60 + 140  # simulate bpm
     dyn_txt = f"current activity: {activity_label}, bpm {bpm}."
     dyn_ids = proc(text=dyn_txt,
                 return_tensors="pt").input_ids.to(model.device)

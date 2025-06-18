@@ -19,12 +19,14 @@ class MusicgenWithContext(MusicgenForConditionalGeneration):
         #     use_cache=True,
         #     return_dict_in_generate=True,
         # )
-        # -----------------------------------------------------------------
-        # make sure we have at least one token to satisfy GenerationMixin
-        if "max_new_tokens" not in gen_kwargs:
-            gen_kwargs["max_new_tokens"] = 1
-            gen_kwargs["do_sample"] = False
-        # -----------------------------------------------------------------
+        
+        # --------------------------------------------------------------- #
+        # make sure generate() yields a *dict* with .past_key_values
+        gen_kwargs.setdefault("return_dict_in_generate", True)
+        gen_kwargs.setdefault("max_new_tokens", 1)   # any positive value
+        gen_kwargs.setdefault("do_sample", False)
+        # --------------------------------------------------------------- #
+
         out = super().generate(input_ids, **gen_kwargs)
         self._pkv = out.past_key_values
         return self._pkv
