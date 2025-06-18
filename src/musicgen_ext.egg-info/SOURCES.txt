@@ -4,7 +4,7 @@ pyproject.toml
 setup.cfg
 src/musicgen_ext/__init__.py
 src/musicgen_ext/adapters.py
-src/musicgen_ext/modeling_musicgen_ext.py
+src/musicgen_ext/context_model.py
 src/musicgen_ext/rolling_kv.py
 src/musicgen_ext.egg-info/PKG-INFO
 src/musicgen_ext.egg-info/SOURCES.txt

@@ -1,5 +1,5 @@
 from musicgen_ext.rolling_kv import RollingKVCache
-from musicgen_ext.context_model import MusicgenWithContext   # from previous answer
+from musicgen_ext.context_model import MusicgenWithContext
 proc   = MusicgenProcessor.from_pretrained("facebook/musicgen-small")
 model  = MusicgenWithContext.from_pretrained("facebook/musicgen-small").half().cuda().eval()
 
