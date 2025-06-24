@@ -27,7 +27,7 @@ class LiveMusicGen:
     Single-instance MusicGen that can be re-prompted on-the-fly.
     """
     def __init__(self,
-                 model_id="facebook/musicgen-large",
+                 model_id="facebook/musicgen-small",
                  sys_prompt="workout techno soundtrack.",
                  bits="fp16",
                  play_steps_sec=1.0,          # size of streamer chunks
@@ -37,7 +37,7 @@ class LiveMusicGen:
 
         self.device  = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model   = load_model(model_id, bits, self.device)
-        self.model.__class__ = MusicgenWithContextAndFade # test path for prompt fade
+        # self.model.__class__ = MusicgenWithContextAndFade # test path for prompt fade
         self.proc    = MusicgenProcessor.from_pretrained(model_id)
 
         self.sr      = self.model.audio_encoder.config.sampling_rate
@@ -93,44 +93,47 @@ class LiveMusicGen:
         self.streamer.on_finalized_audio = _on_chunk
 
     # ------------------------------------------------------------------
-    def _run_generation(self, prompt_ids):
-        """
-        Called inside a background thread.
-        """
-        try:
-            out = self.model.generate_continuation(
-                input_ids       = prompt_ids,
-                past_key_values = self.kv_window.as_tuple(),
-                streamer        = self.streamer,
-                max_new_tokens  = self.steps * 15,    # ~N × play_steps_sec
-                alpha_len_frames=16,                   # blend ~N*20 ms
-            )
-            self.kv_window.append(out.past_key_values)
-        except Exception as e:
-            print("gen thread exception:", e)
+    def _run_generation(self, prompt_ids, streamer):
+        out = self.model.generate_continuation(
+            input_ids=prompt_ids,
+            past_key_values=self.kv_window.as_tuple(),
+            streamer=streamer,
+            max_new_tokens=self.steps * 15,
+        )
+        self.kv_window.append(out.past_key_values)
 
     # ------------------------------------------------------------------
     def push_activity(self, text_prompt: str):
-        """
-        Non-blocking: cancel current worker (if any) and spawn a new one.
-        """
-        lead_in = " Lead into the next section with no break."
-        full_txt = text_prompt.strip().rstrip('.') + "." + lead_in
-
-        ids = self.proc(text=full_txt,
+        ids = self.proc(text=text_prompt,
                         return_tensors="pt").input_ids.to(self.device)
 
-        # cancel old worker
+        # --- 1. stop previous generation --------------------------------
         if self._worker and self._worker.is_alive():
-            self._worker_stop.set()
-            self._worker.join(timeout=0.2)
+            # tell the old streamer to stop emitting chunks
+            if hasattr(self, "_curr_streamer"):
+                self._curr_streamer.stop_signal = True
+            # wait a bit for the thread to exit
+            self._worker.join(timeout=1.0)
 
-        # fresh streamer & stop-flag
-        self._make_streamer()
-        self._worker_stop.clear()
-        self._worker = threading.Thread(target=self._run_generation,
-                                        args=(ids,),
-                                        daemon=True)
+        # --- 2. clear any stale PCM still in the queue -------------------
+        with self.pcm_q.mutex:
+            self.pcm_q.queue.clear()
+
+        # --- 3. build a fresh streamer / thread --------------------------
+        self._curr_streamer = MusicgenStreamer(self.model,
+                                            device=self.device,
+                                            play_steps=self.steps)
+
+        def _on_chunk(pcm, *_):
+            try:
+                self.pcm_q.put_nowait(pcm.astype("float32"))
+            except queue.Full:
+                pass
+        self._curr_streamer.on_finalized_audio = _on_chunk
+
+        self._worker = threading.Thread(
+            target=self._run_generation, args=(ids, self._curr_streamer), daemon=True
+        )
         self._worker.start()
 
     # ------------------------------------------------------------------
@@ -154,7 +157,7 @@ class LiveMusicGen:
 
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
-    sys_prompt = "Classical music for a workout session."
+    sys_prompt = "Techno music for a workout session. Four-on-the-floor techno with a driving bassline, steady beat, and uplifting melodies."
 
     player = LiveMusicGen(play_steps_sec=1.5, wav_out=True, sys_prompt=sys_prompt)
 
