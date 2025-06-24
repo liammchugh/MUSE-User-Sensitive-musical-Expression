@@ -1,6 +1,20 @@
 import numpy as np
+import torch
 import librosa
 from typing import Tuple, Dict, Any
+
+
+def _ensure_numpy(waveform):
+    was_tensor = torch.is_tensor(waveform)
+    if was_tensor:
+        waveform = waveform.detach().cpu().numpy()
+    return waveform, was_tensor
+
+
+def _wrap_output(result, was_tensor):
+    if was_tensor:
+        return torch.from_numpy(result)
+    return result
 
 
 def total_energy(waveform: np.ndarray) -> np.ndarray:
@@ -8,15 +22,15 @@ def total_energy(waveform: np.ndarray) -> np.ndarray:
     Compute total signal energy per channel.
 
     Args:
-        waveform: np.ndarray, shape (C, T) or (T,) for mono
+        waveform: np.ndarray or torch.Tensor, shape (C, T) or (T,) for mono
     Returns:
-        energy: np.ndarray, shape (C,) or scalar for mono
+        energy: np.ndarray or torch.Tensor, shape (C,) or scalar for mono
     """
-    # Ensure 2D array
+    waveform, was_tensor = _ensure_numpy(waveform)
     if waveform.ndim == 1:
         waveform = waveform[np.newaxis, :]
-    # Sum of squares
-    return np.sum(waveform ** 2, axis=1)
+    energy = np.sum(waveform ** 2, axis=1)
+    return _wrap_output(energy, was_tensor)
 
 
 def spectral_centroid(waveform: np.ndarray, sr: int, 
@@ -26,6 +40,7 @@ def spectral_centroid(waveform: np.ndarray, sr: int,
 
     Returns centroid in Hz for each frame: shape (C, N_frames)
     """
+    waveform, was_tensor = _ensure_numpy(waveform)
     if waveform.ndim == 1:
         waveform = waveform[np.newaxis, :]
     centroids = []
@@ -33,8 +48,9 @@ def spectral_centroid(waveform: np.ndarray, sr: int,
         c = librosa.feature.spectral_centroid(
             y=ch, sr=sr, n_fft=n_fft, hop_length=hop_length
         )
-        centroids.append(c.squeeze())  # (N_frames,)
-    return np.stack(centroids, axis=0)
+        centroids.append(c.squeeze())
+    result = np.stack(centroids, axis=0)
+    return _wrap_output(result, was_tensor)
 
 
 def zero_crossing_rate(waveform: np.ndarray, 
@@ -44,6 +60,7 @@ def zero_crossing_rate(waveform: np.ndarray,
 
     Returns array shape (C, N_frames)
     """
+    waveform, was_tensor = _ensure_numpy(waveform)
     if waveform.ndim == 1:
         waveform = waveform[np.newaxis, :]
     zcrs = []
@@ -52,7 +69,8 @@ def zero_crossing_rate(waveform: np.ndarray,
             y=ch, frame_length=frame_length, hop_length=hop_length
         )
         zcrs.append(z.squeeze())
-    return np.stack(zcrs, axis=0)
+    result = np.stack(zcrs, axis=0)
+    return _wrap_output(result, was_tensor)
 
 
 def mfcc(waveform: np.ndarray, sr: int, 
@@ -62,6 +80,7 @@ def mfcc(waveform: np.ndarray, sr: int,
 
     Returns shape (C, n_mfcc, N_frames)
     """
+    waveform, was_tensor = _ensure_numpy(waveform)
     if waveform.ndim == 1:
         waveform = waveform[np.newaxis, :]
     mfccs = []
@@ -71,7 +90,8 @@ def mfcc(waveform: np.ndarray, sr: int,
             n_fft=n_fft, hop_length=hop_length
         )
         mfccs.append(m)
-    return np.stack(mfccs, axis=0)
+    result = np.stack(mfccs, axis=0)
+    return _wrap_output(result, was_tensor)
 
 
 def spectral_contrast(waveform: np.ndarray, sr: int, 
@@ -81,6 +101,7 @@ def spectral_contrast(waveform: np.ndarray, sr: int,
 
     Returns shape (C, n_bands+1, N_frames)
     """
+    waveform, was_tensor = _ensure_numpy(waveform)
     if waveform.ndim == 1:
         waveform = waveform[np.newaxis, :]
     contrasts = []
@@ -90,7 +111,8 @@ def spectral_contrast(waveform: np.ndarray, sr: int,
             n_fft=n_fft, hop_length=hop_length
         )
         contrasts.append(sc)
-    return np.stack(contrasts, axis=0)
+    result = np.stack(contrasts, axis=0)
+    return _wrap_output(result, was_tensor)
 
 
 def spectral_flatness(waveform: np.ndarray, 
@@ -100,6 +122,7 @@ def spectral_flatness(waveform: np.ndarray,
 
     Returns array shape (C, N_frames)
     """
+    waveform, was_tensor = _ensure_numpy(waveform)
     if waveform.ndim == 1:
         waveform = waveform[np.newaxis, :]
     flats = []
@@ -108,7 +131,8 @@ def spectral_flatness(waveform: np.ndarray,
             y=ch, n_fft=n_fft, hop_length=hop_length
         )
         flats.append(f.squeeze())
-    return np.stack(flats, axis=0)
+    result = np.stack(flats, axis=0)
+    return _wrap_output(result, was_tensor)
 
 
 def extract_dsp_features(
@@ -120,15 +144,16 @@ def extract_dsp_features(
     Extract a suite of DSP features for a given waveform.
 
     Args:
-        waveform: np.ndarray, shape (C, T)
+        waveform: np.ndarray or torch.Tensor, shape (C, T)
         sr: Sampling rate
         params: Optional parameters for feature functions
 
     Returns:
         Dictionary mapping feature names to arrays.
     """
+    waveform, was_tensor = _ensure_numpy(waveform)
     params = params or {}
-    feats = {}
+    feats: Dict[str, Any] = {}
     feats['energy'] = total_energy(waveform)
     feats['centroid'] = spectral_centroid(
         waveform, sr,
@@ -157,4 +182,9 @@ def extract_dsp_features(
         n_fft=params.get('flat_n_fft', 2048),
         hop_length=params.get('flat_hop', 256)
     )
+    if was_tensor:
+        # wrap all outputs as tensors
+        for k, v in feats.items():
+            if not torch.is_tensor(v):
+                feats[k] = torch.from_numpy(v)
     return feats
