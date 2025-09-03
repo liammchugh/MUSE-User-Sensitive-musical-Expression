@@ -46,26 +46,53 @@ class MusicgenWithContext(MusicgenForConditionalGeneration):
         if ext_pkv is not None:
             self._pkv = ext_pkv                     # <-- overwrite
 
+        # Normalize/clean potentially duplicated kwargs coming from caller
+        streamer = gen_kwargs.pop("streamer", streamer)
+        gen_kwargs.pop("use_cache", None)
+        gen_kwargs.pop("return_dict_in_generate", None)
+        gen_kwargs.setdefault("use_cache", True)
+        gen_kwargs.setdefault("return_dict_in_generate", True)
+
         # keep return type predictable
         gen_kwargs.setdefault("return_dict_in_generate", True)
 
         # --------------------------------------------------------------
         # 2) build the minimal input dict
         # --------------------------------------------------------------
-        if (input_ids is None) == (inputs_embeds is None):
-            raise ValueError("Pass exactly one of `input_ids` or `inputs_embeds`.")
+        allow_encoder_only = ("encoder_outputs" in gen_kwargs)
 
-        model_inputs = {"input_ids": input_ids} if input_ids is not None else \
-                       {"inputs_embeds": inputs_embeds}
+        if (input_ids is None) and (inputs_embeds is None) and allow_encoder_only:
+            model_inputs = {}  # OK: we provided encoder_outputs; skip re-encoding
+        elif (input_ids is None) != (inputs_embeds is None):
+            model_inputs = {"input_ids": input_ids} if input_ids is not None else {"inputs_embeds": inputs_embeds}
+        else:
+            raise ValueError("Pass exactly one of `input_ids` or `inputs_embeds` (or neither if `encoder_outputs` is provided).")
+
+        # --------------------------------------------------------------
+        # normalize cache type for newer HF
+        # --------------------------------------------------------------
+        try:
+            from transformers.cache_utils import Cache
+        except Exception:
+            Cache = None
+
+        pkv = self._pkv
+        if Cache is not None and pkv is not None and not isinstance(pkv, Cache):
+            try:
+                # accept legacy tuple/list from your RollingKV and wrap it
+                pkv = Cache.from_legacy_cache(pkv)
+            except Exception:
+                # if wrapping fails, fall back to legacy (older HF still accepts it)
+                pass
 
         # --------------------------------------------------------------
         # 3) run generation
         # --------------------------------------------------------------
         out = super().generate(
-            past_key_values = self._pkv,
-            use_cache       = True,
-            max_new_tokens  = int(max_new_tokens),
-            streamer        = streamer,
+            past_key_values=pkv,
+            # use_cache=True,                      # remove (now in gen_kwargs)
+            # return_dict_in_generate=True,        # remove (now in gen_kwargs)
+            streamer=streamer,
             **model_inputs,
             **gen_kwargs,
         )

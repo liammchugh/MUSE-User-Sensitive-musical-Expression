@@ -49,7 +49,7 @@ class MusicgenStreamer(BaseStreamer):
         self,
         model: MusicgenForConditionalGeneration,
         device: Optional[str] = None,
-        play_steps: Optional[int] = 10,
+        play_steps: Optional[int] = 50,
         stride: Optional[int] = None,
         timeout: Optional[float] = None,
     ):
@@ -149,6 +149,16 @@ class MusicgenStreamer(BaseStreamer):
             audio_values = np.zeros(self.to_yield)
 
         self.on_finalized_audio(audio_values[self.to_yield :], stream_end=True)
+
+    def reset_session(self):
+        """Reuse this streamer for a new generation session."""
+        self.stop_signal = False
+        # if you cache tokens/frames between sessions, clear them here:
+        if hasattr(self, "token_cache"):
+            self.token_cache = None
+        if hasattr(self, "_buffer"):
+            try: self._buffer.clear()
+            except Exception: pass
 
     def on_finalized_audio(self, audio: np.ndarray, stream_end: bool = False):
         """Put the new audio in the queue. If the stream is ending, also put a stop signal in the queue."""
