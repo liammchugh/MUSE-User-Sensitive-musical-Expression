@@ -77,42 +77,42 @@ class MusicgenWithContext(MusicgenForConditionalGeneration):
         self._pkv = out.past_key_values
         return out
 
-# Testing with token crossfade
-# ------------------------------------------------------------
-class MusicgenWithContextAndFade(MusicgenWithContext):
-    def generate_continuation(self,
-                              input_ids=None,
-                              alpha_len_frames: int = 8,   # ≈160 ms
-                              **kwargs):
+# # Testing with token crossfade
+# # ------------------------------------------------------------
+# class MusicgenWithContextAndFade(MusicgenWithContext):
+#     def generate_continuation(self,
+#                               input_ids=None,
+#                               alpha_len_frames: int = 8,   # ≈160 ms
+#                               **kwargs):
 
-        # 1) cache old pkv so we can mix later
-        pkv_old = self._pkv
-        super_out = super().generate(input_ids=input_ids,
-                                     **kwargs,
-                                     output_hidden_states=True,
-                                     return_dict_in_generate=True)
+#         # 1) cache old pkv so we can mix later
+#         pkv_old = self._pkv
+#         super_out = super().generate(input_ids=input_ids,
+#                                      **kwargs,
+#                                      output_hidden_states=True,
+#                                      return_dict_in_generate=True)
 
-        hidden_new = super_out.decoder_hidden_states  # tuple(layer) len=L
-        with torch.no_grad():
-            mixed_hidden = []
-            for l, h in enumerate(hidden_new):
-                # h : [B, T, D] where T = frames*4 tokens
-                if h.size(1) < alpha_len_frames*4:
-                    mixed_hidden.append(h)     # too short – skip
-                    continue
+#         hidden_new = super_out.decoder_hidden_states  # tuple(layer) len=L
+#         with torch.no_grad():
+#             mixed_hidden = []
+#             for l, h in enumerate(hidden_new):
+#                 # h : [B, T, D] where T = frames*4 tokens
+#                 if h.size(1) < alpha_len_frames*4:
+#                     mixed_hidden.append(h)     # too short – skip
+#                     continue
 
-                # alpha ramp over first alpha_len_frames*4 tokens
-                Tmix = alpha_len_frames*4
-                alpha = torch.linspace(0, 1, Tmix, device=h.device)  # 0→1
-                alpha = alpha.view(1, Tmix, 1)
+#                 # alpha ramp over first alpha_len_frames*4 tokens
+#                 Tmix = alpha_len_frames*4
+#                 alpha = torch.linspace(0, 1, Tmix, device=h.device)  # 0→1
+#                 alpha = alpha.view(1, Tmix, 1)
 
-                # old hidden state = last pkv_old K projected back (cheap hack)
-                # we approximate with first tokens of old prompt rep:
-                h_old = h[:, :Tmix, :].clone()   # same shape
-                h[:, :Tmix, :] = (1-alpha)*h_old + alpha*h[:, :Tmix, :]
-                mixed_hidden.append(h)
+#                 # old hidden state = last pkv_old K projected back (cheap hack)
+#                 # we approximate with first tokens of old prompt rep:
+#                 h_old = h[:, :Tmix, :].clone()   # same shape
+#                 h[:, :Tmix, :] = (1-alpha)*h_old + alpha*h[:, :Tmix, :]
+#                 mixed_hidden.append(h)
 
-            # replace hidden states (only first layer needed for logits)
-            super_out.decoder_hidden_states = tuple(mixed_hidden)
+#             # replace hidden states (only first layer needed for logits)
+#             super_out.decoder_hidden_states = tuple(mixed_hidden)
 
-        return super_out
+#         return super_out

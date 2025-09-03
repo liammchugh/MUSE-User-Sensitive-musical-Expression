@@ -166,6 +166,29 @@ class MusicgenStreamer(BaseStreamer):
         else:
             return value
 
+class RollingTokenBuffer:
+    def __init__(self, max_frames=2500):
+        self.max_frames = max_frames
+        self.tokens = None  # shape [B, C, T]
+
+    def push(self, new_full_tokens, prev_prompt_len):
+        """
+        new_full_tokens: full sequence returned this call
+        prev_prompt_len: length we used as prompt at the start of this call
+        We append only what was *newly generated* this call.
+        """
+        if prev_prompt_len is None or self.tokens is None:
+            tail = new_full_tokens
+        else:
+            tail = new_full_tokens[:, :, prev_prompt_len:]
+
+        self.tokens = tail if self.tokens is None else torch.cat([self.tokens, tail], dim=-1)
+        # Trim
+        if self.tokens.size(-1) > self.max_frames:
+            self.tokens = self.tokens[:, :, -self.max_frames:].contiguous()
+
+    def prompt(self):
+        return self.tokens
 
 
 if __name__ == "__main__":

@@ -188,3 +188,27 @@ def extract_dsp_features(
             if not torch.is_tensor(v):
                 feats[k] = torch.from_numpy(v)
     return feats
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Prepare ExtraSensory CSV.gz files into train/val/test splits"
+    )
+    parser.add_argument(
+        "data_dir",
+        help="Path to folder containing *.features_labels.csv.gz"
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default="splits.json",
+        help="Where to save the JSON listing of train/val/test file paths"
+    )
+    args = parser.parse_args()
+
+    splits = prepare_extrasensory_data(args.data_dir)
+    import json
+    with open(args.output, "w") as f:
+        json.dump(splits, f, indent=2)
+    print(f"Saved splits to {args.output}")

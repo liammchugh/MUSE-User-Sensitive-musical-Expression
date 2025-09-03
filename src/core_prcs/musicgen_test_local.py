@@ -1,10 +1,9 @@
 # musicgen_live_player.py
 import threading, queue, time, numpy as np, sounddevice as sd, torch
 from transformers import MusicgenProcessor, BitsAndBytesConfig
-from musicgen_ext.context_model import MusicgenWithContext, MusicgenWithContextAndFade
+from musicgen_ext.context_model import MusicgenWithContext
 from musicgen_ext.rolling_kv   import RollingKVCache
-from app import MusicgenStreamer
-
+from core_prcs.app import MusicgenStreamer, RollingTokenBuffer
 
 # ----------------------------------------------------------------------
 def load_model(model_id="facebook/musicgen-small",
@@ -50,6 +49,8 @@ class LiveMusicGen:
         self.model.cache_past_tokens(sys_ids)
         self.kv_window = RollingKVCache(max_frames=2500)          # ≈12 s
         self.kv_window.init_from(self.model._pkv)
+        self.n_codebooks = self.model.decoder.num_codebooks
+        self.tbuf = RollingTokenBuffer(max_frames=2500)
 
         # --- streamer + pcm queue -----------------------------------
         self.pcm_q  : "queue.Queue[np.ndarray]" = queue.Queue(maxsize=64)
@@ -92,20 +93,42 @@ class LiveMusicGen:
                 pass
         self.streamer.on_finalized_audio = _on_chunk
 
-    # ------------------------------------------------------------------
     def _run_generation(self, prompt_ids, streamer):
+        # how many new frames this call should aim for (≈ prompt cadence)
+        max_new_tokens = int(self.fr * 8)  # ~8s of new audio codes per call
+
+        # run continuation from our rolling KV window
         out = self.model.generate_continuation(
             input_ids=prompt_ids,
             past_key_values=self.kv_window.as_tuple(),
+            use_cache=True,
+            return_dict_in_generate=True,
             streamer=streamer,
-            max_new_tokens=self.steps * 15,
+            max_new_tokens=max_new_tokens,
         )
-        self.kv_window.append(out.past_key_values)
+
+        # 1) keep decoder KV window fresh (tail replacement avoids double-append)
+        self.kv_window.replace_from(out.past_key_values)
+
+        # 2) update rolling *token* buffer from the streamer’s cached codes
+        prev_prompt_len = 0 if self.tbuf.prompt() is None else self.tbuf.prompt().size(-1)
+        if hasattr(streamer, "token_cache") and streamer.token_cache is not None:
+            # token_cache is [B*num_codebooks, T]; reshape to [B, C, T] with B=1
+            full_tokens = streamer.token_cache.view(1, self.n_codebooks, -1)
+            self.tbuf.push(full_tokens, prev_prompt_len)
 
     # ------------------------------------------------------------------
     def push_activity(self, text_prompt: str):
         ids = self.proc(text=text_prompt,
                         return_tensors="pt").input_ids.to(self.device)
+        
+        # OPTIONAL: if KV was reset, seed with last tokens to preserve texture
+        seed_decoder_ids = None
+        if self.kv_window.length() == 0 and self.tbuf.prompt() is not None:
+            seed_decoder_ids = self.tbuf.prompt().view(1 * self.n_codebooks, -1)  # [B*C, T]
+
+        # pass via a closure so you could add it later to generate_continuation if desired
+        self._seed_decoder_ids = seed_decoder_ids
 
         # --- 1. stop previous generation --------------------------------
         if self._worker and self._worker.is_alive():
